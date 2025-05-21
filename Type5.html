@@ -1,0 +1,1551 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>WARP: Customer + Crossdock Map with Lanes</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Google Maps API -->
+  <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&libraries=places"></script>
+
+  <!-- Leaflet and dependencies -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+
+  <style>
+    :root {
+      --primary-color: #0055a5;
+      --primary-dark: #003d7a;
+      --secondary-color: #f2994a;
+      --light-gray: #f5f5f5;
+      --medium-gray: #e0e0e0;
+      --dark-gray: #444;
+      --border-radius: 8px;
+      --box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      --transition: all 0.3s ease;
+      --warp-ltl-color: #f2994a;
+      --dedicated-lane-color: #4a94f2;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      color: var(--dark-gray);
+      background-color: #f9f9f9;
+    }
+
+    #map {
+      height: 100vh;
+      width: 100%;
+      z-index: 1;
+    }
+
+    /* Control Panel */
+    .controls {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      background: white;
+      z-index: 1000;
+      padding: 16px 20px;
+      border-radius: var(--border-radius);
+      box-shadow: var(--box-shadow);
+      max-width: 320px;
+      transition: var(--transition);
+    }
+
+    .warp-header {
+      display: flex;
+      align-items: center;
+      margin-bottom: 16px;
+      border-bottom: 2px solid var(--primary-color);
+      padding-bottom: 8px;
+    }
+
+    .warp-logo {
+      font-size: 28px;
+      font-weight: 800;
+      color: var(--primary-color);
+      letter-spacing: 1px;
+      display: flex;
+      align-items: center;
+    }
+
+    .warp-logo::before {
+      content: '';
+      display: inline-block;
+      width: 28px;
+      height: 28px;
+      background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%230055a5"><path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z"/></svg>');
+      background-repeat: no-repeat;
+      margin-right: 6px;
+    }
+
+    .filter-group {
+      margin-bottom: 12px;
+    }
+
+    label {
+      display: block;
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: var(--dark-gray);
+    }
+
+    select, input {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 14px;
+      margin-bottom: 8px;
+      background-color: var(--light-gray);
+    }
+
+    select:focus, input:focus {
+      outline: none;
+      border-color: var(--primary-color);
+      box-shadow: 0 0 0 2px rgba(0,85,165,0.2);
+    }
+
+    .button-group {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    button {
+      background-color: var(--primary-color);
+      color: white;
+      border: none;
+      padding: 10px 16px;
+      border-radius: var(--border-radius);
+      font-weight: 600;
+      cursor: pointer;
+      flex: 1;
+      transition: var(--transition);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    button:hover {
+      background-color: var(--primary-dark);
+      transform: translateY(-1px);
+    }
+
+    button.secondary {
+      background-color: var(--light-gray);
+      color: var(--dark-gray);
+    }
+
+    button.secondary:hover {
+      background-color: var(--medium-gray);
+    }
+
+    /* File Upload */
+    .file-upload {
+      position: relative;
+      overflow: hidden;
+      margin: 12px 0;
+      padding: 12px;
+      background-color: var(--light-gray);
+      border: 2px dashed #ccc;
+      border-radius: var(--border-radius);
+      text-align: center;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .file-upload:hover {
+      border-color: var(--primary-color);
+      background-color: #f0f7ff;
+    }
+
+    .file-upload input {
+      position: absolute;
+      top: 0;
+      right: 0;
+      margin: 0;
+      padding: 0;
+      font-size: 20px;
+      cursor: pointer;
+      opacity: 0;
+      filter: alpha(opacity=0);
+      width: 100%;
+      height: 100%;
+    }
+
+    .file-upload-label {
+      display: block;
+      font-weight: 600;
+      color: #555;
+      font-size: 14px;
+    }
+
+    .file-name {
+      margin-top: 5px;
+      font-size: 12px;
+      color: #666;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: none;
+    }
+
+    /* Loading Indicator */
+    .loading {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(255,255,255,0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+      display: none;
+    }
+
+    .loading-spinner {
+      border: 5px solid #f3f3f3;
+      border-top: 5px solid var(--primary-color);
+      border-radius: 50%;
+      width: 50px;
+      height: 50px;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    /* Enhanced Legend */
+    .legend {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      background: white;
+      padding: 16px;
+      border-radius: var(--border-radius);
+      box-shadow: var(--box-shadow);
+      z-index: 1000;
+      font-size: 12px;
+      max-width: 300px;
+    }
+
+    .legend-title {
+      font-weight: 700;
+      font-size: 14px;
+      margin-bottom: 8px;
+      color: var(--primary-color);
+      border-bottom: 1px solid #eee;
+      padding-bottom: 5px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      margin-bottom: 10px;
+      padding-bottom: 5px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .legend-item:last-child {
+      margin-bottom: 0;
+      padding-bottom: 0;
+      border-bottom: none;
+    }
+
+    .legend-icon {
+      width: 24px;
+      height: 24px;
+      margin-right: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .legend-icon img {
+      width: 24px;
+      height: 24px;
+    }
+
+    .legend-text {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .legend-label {
+      font-weight: 600;
+    }
+
+    .legend-description {
+      font-size: 10px;
+      color: #666;
+      margin-top: 2px;
+    }
+
+    .legend-line {
+      height: 4px;
+      width: 24px;
+      margin-right: 8px;
+    }
+
+    /* Enhanced Connections */
+    .connection-strong {
+      stroke: var(--secondary-color);
+      stroke-width: 3;
+      stroke-dasharray: none;
+      stroke-opacity: 0.8;
+      animation: pulseLine 2s infinite;
+    }
+
+    .warp-ltl-lane {
+      stroke: var(--warp-ltl-color);
+      stroke-width: 3;
+      stroke-opacity: 0.8;
+    }
+
+    .dedicated-lane {
+      stroke: var(--dedicated-lane-color);
+      stroke-width: 3;
+      stroke-opacity: 0.8;
+    }
+
+    @keyframes pulseLine {
+      0% { stroke-opacity: 0.4; }
+      50% { stroke-opacity: 0.8; }
+      100% { stroke-opacity: 0.4; }
+    }
+
+    /* Tooltip for icons */
+    .icon-tooltip {
+      position: relative;
+      display: inline-block;
+    }
+
+    .icon-tooltip .tooltiptext {
+      visibility: hidden;
+      width: 120px;
+      background-color: #555;
+      color: white;
+      text-align: center;
+      border-radius: 6px;
+      padding: 5px;
+      position: absolute;
+      z-index: 1;
+      bottom: 125%;
+      left: 50%;
+      margin-left: -60px;
+      opacity: 0;
+      transition: opacity 0.3s;
+      font-size: 11px;
+    }
+
+    .icon-tooltip:hover .tooltiptext {
+      visibility: visible;
+      opacity: 1;
+    }
+
+    /* Lane filters */
+    .checkbox-group {
+      margin-top: 8px;
+      margin-bottom: 12px;
+    }
+
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      font-size: 14px;
+      margin-bottom: 6px;
+      cursor: pointer;
+    }
+
+    .checkbox-input {
+      margin-right: 8px;
+      width: auto;
+    }
+
+    .lane-filters-title {
+      font-weight: 600;
+      font-size: 14px;
+      margin-bottom: 6px;
+      color: var(--dark-gray);
+    }
+
+    .lane-color-indicator {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      margin-right: 6px;
+      border-radius: 50%;
+    }
+
+    .ltl-color {
+      background-color: var(--warp-ltl-color);
+    }
+
+    .dedicated-color {
+      background-color: var(--dedicated-lane-color);
+    }
+
+    /* Lane Panel */
+    .lane-panel {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: white;
+      padding: 16px;
+      border-radius: var(--border-radius);
+      box-shadow: var(--box-shadow);
+      z-index: 1000;
+      width: 300px;
+      display: none;
+    }
+
+    .lane-panel-title {
+      font-weight: 700;
+      font-size: 16px;
+      margin-bottom: 12px;
+      color: var(--primary-color);
+      border-bottom: 1px solid #eee;
+      padding-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .lane-list {
+      max-height: 300px;
+      overflow-y: auto;
+      margin-bottom: 10px;
+    }
+
+    .lane-item {
+      padding: 8px;
+      border-bottom: 1px solid #f0f0f0;
+      font-size: 13px;
+    }
+
+    .lane-item:hover {
+      background-color: #f9f9f9;
+    }
+
+    .lane-type {
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .lane-route {
+      color: #555;
+    }
+
+    .lane-filter-buttons {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 10px;
+    }
+
+    .lane-filter-button {
+      padding: 6px 12px;
+      font-size: 12px;
+      flex: 1;
+      margin: 0 4px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="controls">
+  <div class="warp-header">
+    <div class="warp-logo">WARP</div>
+  </div>
+  
+  <div class="file-upload">
+    <input type="file" id="csv-upload" accept=".csv" />
+    <span class="file-upload-label"><i class="fas fa-upload"></i> Upload Customer CSV</span>
+    <div class="file-name" id="file-name"></div>
+  </div>
+  
+  <div class="filter-group">
+    <label for="state-filter"><i class="fas fa-map-marker-alt"></i> State:</label>
+    <select id="state-filter">
+      <option value="">All States</option>
+    </select>
+  </div>
+  
+  <div class="filter-group">
+    <label for="brand-filter"><i class="fas fa-building"></i> Brand:</label>
+    <select id="brand-filter">
+      <option value="">All Brands</option>
+    </select>
+  </div>
+  
+  <div class="filter-group">
+    <label for="type-filter"><i class="fas fa-warehouse"></i> Facility Type:</label>
+    <select id="type-filter">
+      <option value="">All Types</option>
+      <option value="FC">FC</option>
+      <option value="DC">DC</option>
+    </select>
+  </div>
+  
+  <div class="lane-filters-title"><i class="fas fa-route"></i> Lane Types:</div>
+  <div class="checkbox-group">
+    <label class="checkbox-label">
+      <input type="checkbox" id="show-warp-ltl" class="checkbox-input" checked>
+      <span class="lane-color-indicator ltl-color"></span>
+      WARP LTL Lanes
+    </label>
+    <label class="checkbox-label">
+      <input type="checkbox" id="show-dedicated" class="checkbox-input" checked>
+      <span class="lane-color-indicator dedicated-color"></span>
+      Dedicated Lanes
+    </label>
+  </div>
+  
+  <div class="button-group">
+    <button id="apply-filters"><i class="fas fa-filter"></i> Apply Filters</button>
+    <button id="reset-filters" class="secondary"><i class="fas fa-undo"></i> Reset</button>
+  </div>
+  
+  <div class="button-group" style="margin-top: 10px;">
+    <button id="show-all-lanes"><i class="fas fa-route"></i> View All Lanes</button>
+  </div>
+</div>
+
+<div class="lane-panel" id="lane-panel">
+  <div class="lane-panel-title">
+    <i class="fas fa-route"></i> WARP Lanes
+  </div>
+  <div class="lane-filter-buttons">
+    <button class="lane-filter-button" id="show-ltl-lanes">LTL Lanes</button>
+    <button class="lane-filter-button" id="show-dedicated-lanes">Dedicated Lanes</button>
+    <button class="lane-filter-button" id="show-all-lane-types">All Lanes</button>
+  </div>
+  <div class="lane-list" id="lane-list">
+    <!-- Will be populated dynamically -->
+  </div>
+  <button id="close-lane-panel"><i class="fas fa-times"></i> Close</button>
+</div>
+
+<div class="loading" id="loading">
+  <div class="loading-spinner"></div>
+</div>
+
+<div class="legend">
+  <div class="legend-title">
+    <i class="fas fa-info-circle"></i> Map Legend
+  </div>
+  <div class="legend-item">
+    <div class="legend-icon">
+      <img src="https://maps.google.com/mapfiles/ms/icons/red-dot.png" alt="Facility">
+    </div>
+    <div class="legend-text">
+      <span class="legend-label">Fulfillment Center (FC)</span>
+      <span class="legend-description">Customer fulfillment locations</span>
+    </div>
+  </div>
+  <div class="legend-item">
+    <div class="legend-icon">
+      <img src="https://maps.google.com/mapfiles/ms/icons/green-dot.png" alt="DC">
+    </div>
+    <div class="legend-text">
+      <span class="legend-label">Distribution Center (DC)</span>
+      <span class="legend-description">Customer distribution hubs</span>
+    </div>
+  </div>
+  <div class="legend-item">
+    <div class="legend-icon">
+      <img src="https://maps.google.com/mapfiles/ms/icons/blue.png" alt="Crossdock">
+    </div>
+    <div class="legend-text">
+      <span class="legend-label">Crossdock</span>
+      <span class="legend-description">WARP transfer locations</span>
+    </div>
+  </div>
+  <div class="legend-item">
+    <div class="legend-line" style="background: var(--warp-ltl-color); height: 3px;"></div>
+    <div class="legend-text">
+      <span class="legend-label">WARP LTL Lane</span>
+      <span class="legend-description">Less than truckload service lanes</span>
+    </div>
+  </div>
+  <div class="legend-item">
+    <div class="legend-line" style="background: var(--dedicated-lane-color); height: 3px;"></div>
+    <div class="legend-text">
+      <span class="legend-label">Dedicated Lane</span>
+      <span class="legend-description">Customer dedicated service routes</span>
+    </div>
+  </div>
+</div>
+
+<div id="map"></div>
+
+<script>
+// Initialize map using Leaflet
+const map = L.map('map').setView([39.5, -98.35], 4);
+
+// Add a Google Maps layer
+const googleStreets = L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+  maxZoom: 20,
+  subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+  attribution: '&copy; Google Maps'
+}).addTo(map);
+
+// Define custom icons
+const fcIcon = L.icon({
+  iconUrl: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png',
+  iconSize: [32, 32],
+  iconAnchor: [16, 32],
+  popupAnchor: [0, -32]
+});
+
+const dcIcon = L.icon({
+  iconUrl: 'https://maps.google.com/mapfiles/ms/icons/green-dot.png',
+  iconSize: [32, 32],
+  iconAnchor: [16, 32],
+  popupAnchor: [0, -32]
+});
+
+const crossdockIcon = L.icon({
+  iconUrl: 'https://maps.google.com/mapfiles/ms/icons/blue.png',
+  iconSize: [32, 32],
+  iconAnchor: [16, 32],
+  popupAnchor: [0, -32]
+});
+
+// Location database for geocoding
+const locationDatabase = {
+  // Cities
+  "LAX": { lat: 33.9416, lng: -118.4085, name: "Los Angeles, CA" },
+  "SFO": { lat: 37.6213, lng: -122.3790, name: "San Francisco, CA" },
+  "EWR": { lat: 40.6895, lng: -74.1745, name: "Newark, NJ" },
+  "IAH": { lat: 29.9902, lng: -95.3368, name: "Houston, TX" },
+  "SAT": { lat: 29.5337, lng: -98.4699, name: "San Antonio, TX" },
+  "MIA": { lat: 25.7617, lng: -80.1918, name: "Miami, FL" },
+  "ATL": { lat: 33.6407, lng: -84.4277, name: "Atlanta, GA" },
+  "LAS": { lat: 36.0840, lng: -115.1537, name: "Las Vegas, NV" },
+  "ORD": { lat: 41.9742, lng: -87.9073, name: "Chicago, IL" },
+  "BWI": { lat: 39.1774, lng: -76.6684, name: "Baltimore, MD" },
+  "PHX": { lat: 33.4484, lng: -112.0740, name: "Phoenix, AZ" },
+  "DTW": { lat: 42.2162, lng: -83.3554, name: "Detroit, MI" },
+  "DEN": { lat: 39.8561, lng: -104.6737, name: "Denver, CO" },
+  "DFW": { lat: 32.8998, lng: -97.0403, name: "Dallas-Fort Worth, TX" },
+  "CMH": { lat: 39.9999, lng: -82.8872, name: "Columbus, OH" },
+  "MCO": { lat: 28.4312, lng: -81.3081, name: "Orlando, FL" },
+  "TPA": { lat: 27.9756, lng: -82.5333, name: "Tampa, FL" },
+  "IND": { lat: 39.7169, lng: -86.2956, name: "Indianapolis, IN" },
+  "AUS": { lat: 30.1975, lng: -97.6664, name: "Austin, TX" },
+  "PDX": { lat: 45.5887, lng: -122.5968, name: "Portland, OR" },
+  "SLC": { lat: 40.7899, lng: -111.9791, name: "Salt Lake City, UT" },
+  "SAN": { lat: 32.7338, lng: -117.1933, name: "San Diego, CA" },
+  "RDU": { lat: 35.8801, lng: -78.7880, name: "Raleigh-Durham, NC" },
+  "SEA": { lat: 47.4502, lng: -122.3088, name: "Seattle, WA" },
+  "BOS": { lat: 42.3656, lng: -71.0096, name: "Boston, MA" },
+  "CLT": { lat: 35.2144, lng: -80.9473, name: "Charlotte, NC" },
+  "MCI": { lat: 39.2976, lng: -94.7139, name: "Kansas City, MO" },
+  "BDL": { lat: 41.9389, lng: -72.6832, name: "Hartford, CT" },
+  "IAD": { lat: 38.9531, lng: -77.4565, name: "Washington Dulles, DC" },
+  
+  // Additional cities
+  "Fairfield": { lat: 40.7795, lng: -74.2765, name: "Fairfield, NJ" },
+  "Latham": { lat: 42.7504, lng: -73.7599, name: "Latham, NY" },
+  "Groveport": { lat: 39.8533, lng: -82.8938, name: "Groveport, OH" },
+  "Bound Brook": { lat: 40.5642, lng: -74.5377, name: "Bound Brook, NJ" },
+  "Pottsville": { lat: 40.6848, lng: -76.1953, name: "Pottsville, PA" },
+  "Wilkes Barre": { lat: 41.2459, lng: -75.8813, name: "Wilkes Barre, PA" },
+  "Walnut": { lat: 34.0202, lng: -117.8653, name: "Walnut, CA" },
+  "Henderson": { lat: 36.0395, lng: -115.0629, name: "Henderson, NV" },
+  "Lehi": { lat: 40.3916, lng: -111.8508, name: "Lehi, UT" },
+  "Clackamas": { lat: 45.4282, lng: -122.5702, name: "Clackamas, OR" },
+  "Tumwater": { lat: 47.0073, lng: -122.9093, name: "Tumwater, WA" },
+  "Seatac": { lat: 47.4436, lng: -122.2982, name: "Seatac, WA" },
+  "Englewood": { lat: 39.6478, lng: -104.9878, name: "Englewood, CO" },
+  "Commerce": { lat: 33.9984, lng: -118.1598, name: "Commerce, CA" },
+  "Northlake": { lat: 41.9128, lng: -87.9006, name: "Northlake, IL" },
+  "Philadelphia": { lat: 39.9526, lng: -75.1652, name: "Philadelphia, PA" },
+  "Beltsville": { lat: 39.0393, lng: -76.9075, name: "Beltsville, MD" },
+  "Greater Landover": { lat: 38.9340, lng: -76.8839, name: "Landover, MD" },
+  "Landover": { lat: 38.9340, lng: -76.8839, name: "Landover, MD" },
+  "South Brunswick": { lat: 40.3864, lng: -74.5672, name: "South Brunswick, NJ" },
+  "Sacramento": { lat: 38.5816, lng: -121.4944, name: "Sacramento, CA" },
+  "Concord": { lat: 37.9771, lng: -122.0338, name: "Concord, CA" },
+  "Oklahoma City": { lat: 35.4676, lng: -97.5164, name: "Oklahoma City, OK" },
+  "Nashville": { lat: 36.1627, lng: -86.7816, name: "Nashville, TN" },
+  "Memphis": { lat: 35.1495, lng: -90.0490, name: "Memphis, TN" },
+  "Riverside": { lat: 39.1754, lng: -94.6085, name: "Riverside, MO" },
+  "Omaha": { lat: 41.2565, lng: -95.9345, name: "Omaha, NE" },
+  "North Salt Lake City": { lat: 40.8446, lng: -111.9055, name: "North Salt Lake City, UT" },
+  "Clarksville": { lat: 38.2967, lng: -85.7590, name: "Clarksville, IN" },
+  "Stockton": { lat: 37.9577, lng: -121.2908, name: "Stockton, CA" },
+  "Patterson": { lat: 37.4716, lng: -121.1297, name: "Patterson, CA" },
+  "Santa Fe Springs": { lat: 33.9472, lng: -118.0853, name: "Santa Fe Springs, CA" },
+  "Brooklyn": { lat: 40.6782, lng: -73.9442, name: "Brooklyn, NY" },
+  "Dayton": { lat: 40.4998, lng: -74.4984, name: "Dayton, NJ" },
+  "San Leandro": { lat: 37.7249, lng: -122.1561, name: "San Leandro, CA" },
+  "Orlando": { lat: 28.5383, lng: -81.3792, name: "Orlando, FL" },
+  "Eatontown": { lat: 40.2884, lng: -74.0511, name: "Eatontown, NJ" },
+  "Des Moines": { lat: 41.6005, lng: -93.6091, name: "Des Moines, IA" },
+  "Oakland": { lat: 37.8044, lng: -122.2711, name: "Oakland, CA" },
+  "Vernon": { lat: 34.0030, lng: -118.2114, name: "Vernon, CA" },
+  "Reno": { lat: 39.5296, lng: -119.8138, name: "Reno, NV" },
+  "Grand Prairie": { lat: 32.7459, lng: -97.0072, name: "Grand Prairie, TX" },
+  "Austin": { lat: 30.2672, lng: -97.7431, name: "Austin, TX" },
+  "Chicago": { lat: 41.8781, lng: -87.6298, name: "Chicago, IL" },
+  "Edison": { lat: 40.5187, lng: -74.4121, name: "Edison, NJ" },
+  "Bergenfield": { lat: 40.9284, lng: -73.9993, name: "Bergenfield, NJ" },
+  "Farmers Branch": { lat: 32.9269, lng: -96.8382, name: "Farmers Branch, TX" },
+  "Carrollton": { lat: 32.9756, lng: -96.8897, name: "Carrollton, TX" },
+  "DeSoto": { lat: 32.5895, lng: -96.8569, name: "DeSoto, TX" },
+  "City of Industry": { lat: 34.0197, lng: -117.9381, name: "City of Industry, CA" },
+  "Houston": { lat: 29.7604, lng: -95.3698, name: "Houston, TX" },
+  "Cedar Park": { lat: 30.5052, lng: -97.8203, name: "Cedar Park, TX" },
+  "Montgomery": { lat: 41.5290, lng: -74.2432, name: "Montgomery, NY" },
+  "Piscataway": { lat: 40.5547, lng: -74.4638, name: "Piscataway, NJ" },
+  "Dallas": { lat: 32.7767, lng: -96.7970, name: "Dallas, TX" },
+  "Miami": { lat: 25.7617, lng: -80.1918, name: "Miami, FL" },
+  "Lewisville": { lat: 33.0462, lng: -97.0036, name: "Lewisville, TX" }
+};
+
+// Crossdock data
+const crossdocks = [
+  ["WTCH-DFW-1", 32.7572, -97.0273], ["WTCH-EWR-1", 40.564, -74.5401],
+  ["WTCH-LAX-7", 34.0437, -118.2391], ["WTCH-MCO-1", 28.4562, -81.3595],
+  ["WTCH-MIA-2", 25.9536, -80.2716], ["WTCH-OAK-1", 37.6299, -122.0969],
+  ["WTCH-ORD-1", 41.9553, -87.9401], ["WTCH-PDX-1", 45.5729, -122.6969],
+  ["WTCH-PHX-1", 33.4359, -112.2611], ["WTCH-SEA-1", 47.311, -122.2364],
+  ["WTCH-PHL-1", 39.8273, -75.1738], ["WTCH-SAT-2", 29.4258, -98.4111],
+  ["WTCH-TPA-1", 27.9881, -82.3986], ["WTCH-MCO-2", 28.4343, -81.3957],
+  ["WTCH-IAH-2", 29.8045, -95.4528], ["WTCH-SJC-2", 37.4032, -121.9231],
+  ["WTCH-EWR-2", 40.5685, -74.54], ["WTCH-LAX-8", 33.8735, -118.2643],
+  ["WTCH-SMF-1", 38.6132, -121.4286], ["WTCH-SCK-1", 37.9634, -121.334],
+  ["WTCH-TPA-2", 27.973, -82.3706], ["WTCH-YYC-1", 50.9956, -113.9783],
+  ["WTCH-YVR-1", 49.1703, -123.0266], ["WTCH-SAN-2", 32.9426, -117.0435],
+  ["WTCH-LAX-2", 33.8421, -118.2533], ["WTCH-DFW-3", 32.9358, -97.0752],
+  ["WTCH-PHX-2", 33.4468, -112.0673], ["WTCH-SAT-1", 29.4581, -98.3757],
+  ["WTCH-ORD-3", 41.9192, -87.9065], ["WTCH-DFW-2", 32.663, -97.111],
+  ["WTCH-BOS-1", 42.127, -71.0501], ["WTCH-CMH-1", 39.882, -83.0844],
+  ["WTCH-DEN-1", 39.7645, -104.799], ["WTCH-DTW-1", 42.6642, -83.012],
+  ["WTCH-RDU-1", 35.907, -78.8726], ["WTCH-SLC-1", 40.7825, -111.9817],
+  ["WTCH-STL-1", 38.7131, -90.2203], ["WTCH-SLC-3", 40.7185, -111.901],
+  ["WTCH-MCI-1", 39.0682, -94.5945], ["WTCH-CLT-1", 35.2056, -80.9744],
+  ["WTCH-LAS-2", 36.0631, -115.1776], ["WTCH-OKC-1", 35.4513, -97.5485],
+  ["WTCH-BNA-1", 35.987, -86.5075], ["WTCH-IND-1", 39.6896, -86.2441],
+  ["WTCH-CMH-2", 39.8973, -83.1446], ["WTCH-BDL-1", 41.7409, -72.6608],
+  ["WTCH-ATL-3", 33.8542, -84.2165], ["WTCH-ATL-2", 33.7394, -84.5153],
+  ["WTCH-DEN-2", 39.7645, -104.799]
+];
+
+// WARP LTL Lanes
+const warpLtlLanes = [
+  "LAX-LAX", "SFO-SFO", "EWR-EWR", "IAH-IAH", "SAT-SAT", "MIA-MIA", "ATL-ATL", "LAS-LAS", 
+  "ORD-ORD", "BWI-BWI", "PHX-PHX", "DTW-DTW", "DEN-DEN", "DFW-DFW", "CMH-CMH", "MCO-MCO", 
+  "TPA-TPA", "IND-IND", "DFW-IAH", "ATL-DFW", "SFO-IAH", "DFW-ATL", "SFO-SAT", "LAX-LAS", 
+  "LAX-SFO", "SFO-DFW", "SFO-LAX", "LAX-EWR", "DFW-AUS", "SFO-EWR", "LAX-PHX", "SFO-AUS", 
+  "DFW-SAT", "IAH-DFW", "DFW-SFO", "IAH-SFO", "IND-DFW", "BDL-BDL", "MCI-MCI", "PDX-PDX", 
+  "SLC-SLC", "SAN-SAN", "RDU-RDU", "SEA-SEA", "BOS-BOS", "ATL-ORD", "AUS-LAX", "AUS-ORD", 
+  "AUS-SFO", "BWI-ORD", "CLT-ORD", "CMH-ORD", "DEN-ORD", "DFW-LAX", "DFW-ORD", "EWR-ORD", 
+  "IAD-ORD", "IAH-LAX", "IAH-ORD", "IND-ORD", "LAX-AUS", "LAX-DFW", "LAX-IAH", "LAX-ORD", 
+  "LAX-SAT", "MCO-ORD", "MIA-ORD", "PHX-ORD", "RDU-ORD", "SAT-LAX", "SAT-ORD", "SAT-SFO", 
+  "TPA-ORD", "LAX-SEA", "LAX-PDX", "LAX-SLC", "LAX-DEN", "PDX-SEA"
+];
+
+// Dedicated Lanes - parse and format
+const dedicatedLanesRaw = [
+  "Grocery Delivery Logistics, Inc dba HelloFresh US|Fairfield, NJ > Latham, NY",
+  "Aritzia (United States of Aritzia)|Groveport, OH to Los Angeles, CA",
+  "Sak's OFF 5TH|Bound Brook, NJ - Pottsville, PA",
+  "Sak's OFF 5TH|Bound Brook, NJ - Wilkes Barre, PA",
+  "Aritzia (United States of Aritzia)|Groveport, OH to Dallas, TX",
+  "Imperfect Foods|Walnut,CA to Henderson,NV to Lehi,UT",
+  "Imperfect Foods|Walnut, CA > Clackamas OR ( Team)",
+  "Imperfect Foods|Walnut, CA > Tumwater WA> Seatac, WA, ( Team)",
+  "Sak's OFF 5TH|Los Angeles, CA - Bound Brook, NJ",
+  "Imperfect Foods|San Antonio,TX > Englewood, CO (Solo)",
+  "Imperfect Foods|Commerce, CA to Northlake, IL",
+  "The Fruit Guys|Philadelphia>Beltsville>Beltsville",
+  "ColdTrack|Greater Landover, MD > South Brunswick, Township, NJ",
+  "Imperfect Foods|Walnut, CA > Sacramento, CA > Concord, CA,",
+  "Ollie Pets|Oklahoma City, OK - Dallas, TX - 53'",
+  "Mealogic|Landover, MD > Northlake, IL - 53' Reefer",
+  "The FruitGuys|PA-MD (2 STOPS)",
+  "DoorDash|Piscataway, NJ, 08854 -> Montgomery, NY, 12549",
+  "Grocery Delivery Logistics, Inc dba HelloFresh US|Nashville, TN - Memphis, TN - 53'",
+  "Imperfect Foods|Walnut, CA > San Francisco, CA",
+  "ColdTrack|Eatontown, NJ - South Brunswick, NJ",
+  "Grocery Delivery Logistics, Inc dba HelloFresh US|Riverside, MO - Omaha, NE - 26'",
+  "Imperfect Foods|Walnut,CA to Henderson,NV to Lehi,UT to North Salt Lake City,UT",
+  "Grocery Delivery Logistics, Inc dba HelloFresh US|Nashville, TN - Clarksville, IN - 26'",
+  "Grocery Delivery Logistics, Inc dba HelloFresh US|Nashville, TN - Memphis, TN - 26'",
+  "ColdTrack|Stockton-Patterson-Santa Fe Springs, CA",
+  "Parsel|Brooklyn, NY > Dayton, NJ > Philadelphia, PA",
+  "ColdTrack|Stockton, CA - San Leandro, CA",
+  "Aritzia (United States of Aritzia)|Groveport, OH to Orlando, FL > Miami, FL",
+  "ColdTrack|Eatontown, NJ > Dayton, NJ",
+  "Imperfect Foods|San Francisco, CA to Walnut, CA",
+  "ColdTrack|DoorDash|Grand Prairie, TX, 75050 -> Lewisville, TX, 75057",
+  "Grocery Delivery Logistics, Inc dba HelloFresh US|Riverside, MO - Des Moines, IA - 26'",
+  "Good Eggs Inc.|Oakland, CA - Vernon, CA",
+  "Grocery Delivery Logistics, Inc dba HelloFresh US|Nashville, TN - Clarksville, IN - 53'",
+  "ColdTrack|Concord, CA > Reno, NV",
+  "ColdTrack|Patterson, CA - Stockton, CA - San Leandro, CA",
+  "Logiscal LLC|Austin,TX > Grand Prairie > Austin",
+  "Aritzia (United States of Aritzia)|Groveport, OH to Chicago, IL",
+  "Grocery Delivery Logistics, Inc dba HelloFresh US|Fairfield, NJ > Latham, NY",
+  "ColdTrack|Edison, NJ > Bergenfield, NJ",
+  "Parsel|Farmers Branch, TX > Carrollton, TX > DeSoto, TX",
+  "DoorDash|Los Angeles, CA, 90059 -> City of Industry, CA, 90601",
+  "DoorDash|Houston, TX, 77031 -> Houston, TX, 77040",
+  "DoorDash|Austin, TX, 78746 -> Cedar Park, TX, 78613 -> Austin, TX, 78728"
+];
+
+// Parse dedicated lanes into structured data
+const dedicatedLanes = dedicatedLanesRaw.map(lane => {
+  const [customer, route] = lane.split('|');
+  return {
+    customer: customer,
+    route: route,
+    formattedRoute: route.replace(/[>\-,]/g, ' to ').replace(/\s+to\s+/g, ' to ')
+  };
+});
+
+// Format lanes for display
+const formattedWarpLtlLanes = warpLtlLanes.map(lane => {
+  const [origin, destination] = lane.split('-');
+  return {
+    origin: origin,
+    destination: destination,
+    originName: locationDatabase[origin]?.name || origin,
+    destinationName: locationDatabase[destination]?.name || destination
+  };
+});
+
+// State codes
+const usStates = new Set([
+  "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN",
+  "IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV",
+  "NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN",
+  "TX","UT","VT","VA","WA","WV","WI","WY","DC"
+]);
+
+// State names mapping for natural language understanding
+const stateFullNames = {
+  "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR", "California": "CA",
+  "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE", "Florida": "FL", "Georgia": "GA",
+  "Hawaii": "HI", "Idaho": "ID", "Illinois": "IL", "Indiana": "IN", "Iowa": "IA",
+  "Kansas": "KS", "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME", "Maryland": "MD",
+  "Massachusetts": "MA", "Michigan": "MI", "Minnesota": "MN", "Mississippi": "MS",
+  "Missouri": "MO", "Montana": "MT", "Nebraska": "NE", "Nevada": "NV", "New Hampshire": "NH",
+  "New Jersey": "NJ", "New Mexico": "NM", "New York": "NY", "North Carolina": "NC",
+  "North Dakota": "ND", "Ohio": "OH", "Oklahoma": "OK", "Oregon": "OR", "Pennsylvania": "PA",
+  "Rhode Island": "RI", "South Carolina": "SC", "South Dakota": "SD", "Tennessee": "TN",
+  "Texas": "TX", "Utah": "UT", "Vermont": "VT", "Virginia": "VA", "Washington": "WA",
+  "West Virginia": "WV", "Wisconsin": "WI", "Wyoming": "WY", "District of Columbia": "DC"
+};
+
+// Add all crossdocks to the map
+const crossdockMarkers = {};
+const crossdockByState = {};
+
+crossdocks.forEach(([name, lat, lng]) => {
+  const marker = L.marker([lat, lng], { icon: crossdockIcon }).addTo(map)
+    .bindPopup(`
+      <strong>${name}</strong><br>
+      <span>WARP Crossdock</span><br>
+      <span>Latitude: ${lat.toFixed(4)}</span><br>
+      <span>Longitude: ${lng.toFixed(4)}</span>
+    `);
+  
+  crossdockMarkers[name] = {
+    marker,
+    name,
+    lat,
+    lng
+  };
+  
+  // Get state from name (if applicable) or determine using reverse geocoding
+  // For this example, we'll use a simple approach
+  const stateCode = getStateFromCoordinates(lat, lng);
+  if (stateCode) {
+    if (!crossdockByState[stateCode]) {
+      crossdockByState[stateCode] = [];
+    }
+    crossdockByState[stateCode].push({
+      name,
+      lat,
+      lng
+    });
+  }
+});
+
+// State lookup function (simplified - in a real application, use reverse geocoding)
+function getStateFromCoordinates(lat, lng) {
+  // This is a simplified approach - in production you would use reverse geocoding
+  // For the demo, we'll extract state from crossdock name or use approximate boundaries
+  
+  // West Coast
+  if (lng < -115) {
+    if (lat > 45) return "WA";
+    if (lat > 41) return "OR";
+    return "CA";
+  }
+  // East Coast
+  if (lng > -75) {
+    if (lat > 42) return "NY";
+    if (lat > 39) return "NJ";
+    if (lat > 37) return "MD";
+    return "FL";
+  }
+  // Middle America
+  if (lng > -100) {
+    if (lat > 43) return "IL";
+    if (lat > 40) return "OH";
+    if (lat > 37) return "KY";
+    if (lat > 34) return "GA";
+    return "TX";
+  }
+  // Mountain Region
+  if (lat > 40) return "CO";
+  return "AZ";
+}
+
+function getStateFromAddress(address) {
+  const match = address.match(/,\s*([A-Z]{2})\s*\d{5}/);
+  return match ? match[1] : '';
+}
+
+function haversineDistance(lat1, lon1, lat2, lon2) {
+  const R = 3958.8; // Earth radius in miles
+  const rad = x => x * Math.PI / 180;
+  const dLat = rad(lat2 - lat1);
+  const dLon = rad(lon2 - lon1);
+  const a = Math.sin(dLat/2) ** 2 +
+            Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLon/2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Get the state from a location name
+function getStateFromLocationName(locationName) {
+  // First check if it's a direct match for a state abbreviation
+  if (usStates.has(locationName.toUpperCase())) {
+    return locationName.toUpperCase();
+  }
+  
+  // Check if location name contains state info
+  for (const state of Object.keys(stateFullNames)) {
+    if (locationName.includes(state)) {
+      return stateFullNames[state];
+    }
+  }
+  
+  // Check if location name contains state abbreviation
+  for (const stateCode of usStates) {
+    if (locationName.includes(`, ${stateCode}`)) {
+      return stateCode;
+    }
+  }
+  
+  // If not found, check location database
+  for (const [code, location] of Object.entries(locationDatabase)) {
+    if (location.name === locationName || location.name.includes(locationName)) {
+      // Extract state from location name
+      const statePart = location.name.split(', ')[1];
+      if (statePart && usStates.has(statePart)) {
+        return statePart;
+      }
+    }
+  }
+  
+  return null;
+}
+
+let allFacilities = [];
+let customerMarkers = [];
+let connectionLines = [];
+let laneLines = [];
+let customersByName = {};
+let facilitiesByType = {
+  'FC': [],
+  'DC': []
+};
+
+function updateFilters() {
+  const stateSet = new Set();
+  const brandSet = new Set();
+  const typeSet = new Set(['FC', 'DC']);
+
+  allFacilities.forEach(f => {
+    if (f.State) stateSet.add(f.State);
+    if (f.Customer_Name) brandSet.add(f.Customer_Name);
+    if (f.Facility_Type && !typeSet.has(f.Facility_Type)) typeSet.add(f.Facility_Type);
+    
+    // Organize facilities by customer name
+    if (f.Customer_Name) {
+      if (!customersByName[f.Customer_Name]) {
+        customersByName[f.Customer_Name] = [];
+      }
+      customersByName[f.Customer_Name].push(f);
+    }
+    
+    // Organize facilities by type
+    if (f.Facility_Type) {
+      if (!facilitiesByType[f.Facility_Type]) {
+        facilitiesByType[f.Facility_Type] = [];
+      }
+      facilitiesByType[f.Facility_Type].push(f);
+    }
+  });
+
+  // Add states from lanes for comprehensive filtering
+  for (const lane of formattedWarpLtlLanes) {
+    const originState = getStateFromLocationName(lane.originName);
+    const destState = getStateFromLocationName(lane.destinationName);
+    
+    if (originState) stateSet.add(originState);
+    if (destState) stateSet.add(destState);
+  }
+  
+  for (const lane of dedicatedLanes) {
+    // Find state info in route
+    const routeParts = lane.route.split(/[>\-,]/)
+      .map(part => part.trim())
+      .filter(part => part && !part.includes("("));
+      
+    for (const part of routeParts) {
+      const stateCode = getStateFromLocationName(part);
+      if (stateCode) stateSet.add(stateCode);
+    }
+  }
+
+  const stateSelect = document.getElementById("state-filter");
+  const brandSelect = document.getElementById("brand-filter");
+  const typeSelect = document.getElementById("type-filter");
+  
+  // Clear existing options except the first one
+  [stateSelect, brandSelect].forEach(sel => {
+    while (sel.options.length > 1) sel.remove(1);
+  });
+  
+  // Type filter might have some default values we want to keep
+  while (typeSelect.options.length > 1) typeSelect.remove(1);
+
+  // Add new options sorted alphabetically
+  Array.from(stateSet).sort().forEach(state => {
+    const opt = document.createElement("option");
+    opt.value = opt.text = state;
+    stateSelect.add(opt);
+  });
+
+  Array.from(brandSet).sort().forEach(brand => {
+    const opt = document.createElement("option");
+    opt.value = opt.text = brand;
+    brandSelect.add(opt);
+  });
+  
+  Array.from(typeSet).sort().forEach(type => {
+    // Skip default options that might already be there
+    if (typeSelect.querySelector(`option[value="${type}"]`)) return;
+    
+    const opt = document.createElement("option");
+    opt.value = opt.text = type;
+    typeSelect.add(opt);
+  });
+  
+  document.getElementById("loading").style.display = "none";
+}
+
+function clearMap() {
+  // Remove all customer markers
+  customerMarkers.forEach(marker => map.removeLayer(marker));
+  customerMarkers = [];
+  
+  // Remove all connection lines
+  connectionLines.forEach(line => map.removeLayer(line));
+  connectionLines = [];
+  
+  // Remove all lane lines
+  laneLines.forEach(line => map.removeLayer(line));
+  laneLines = [];
+  
+  // Hide the lane panel
+  document.getElementById("lane-panel").style.display = "none";
+  
+  // Reset crossdock icons to original size
+  Object.values(crossdockMarkers).forEach(cd => {
+    cd.marker.setIcon(crossdockIcon);
+  });
+}
+
+function applyFilters() {
+  const state = document.getElementById("state-filter").value;
+  const brand = document.getElementById("brand-filter").value;
+  const type = document.getElementById("type-filter").value;
+  const showWarpLtl = document.getElementById("show-warp-ltl").checked;
+  const showDedicated = document.getElementById("show-dedicated").checked;
+  
+  document.getElementById("loading").style.display = "flex";
+  
+  // Clear previous markers and lines
+  clearMap();
+  
+  setTimeout(() => {
+    const filteredFacilities = allFacilities.filter(row => 
+      (!state || row.State === state) &&
+      (!brand || row.Customer_Name === brand) &&
+      (!type || row.Facility_Type === type)
+    );
+    
+    if (filteredFacilities.length === 0 && !showWarpLtl && !showDedicated) {
+      document.getElementById("loading").style.display = "none";
+      alert("No facilities match the selected filters.");
+      return;
+    }
+    
+    // Process and display all matching facilities
+    filteredFacilities.forEach(row => {
+      // Choose icon based on facility type
+      let markerIcon = fcIcon;  // Default icon
+      if (row.Facility_Type === 'DC') {
+        markerIcon = dcIcon;
+      }
+      
+      // Create marker for the facility
+      const marker = L.marker([row.Latitude, row.Longitude], { icon: markerIcon })
+        .addTo(map)
+        .bindPopup(`
+          <strong>${row.Name || 'Unnamed Facility'}</strong><br>
+          <strong>Brand:</strong> ${row.Customer_Name || 'N/A'}<br>
+          <strong>Type:</strong> ${row.Facility_Type || 'N/A'}<br>
+          <strong>Address:</strong> ${row.Address || 'N/A'}
+        `);
+      
+      customerMarkers.push(marker);
+      
+      // Find the nearest crossdock for this facility
+      let minDist = Infinity;
+      let nearestCrossdocks = [];
+      
+      crossdocks.forEach(([cname, clat, clng]) => {
+        const d = haversineDistance(row.Latitude, row.Longitude, clat, clng);
+        
+        // If this is exactly as close as our current minimum, add it to the array
+        if (Math.abs(d - minDist) < 0.01) {
+          nearestCrossdocks.push({ name: cname, lat: clat, lng: clng, distance: d });
+        }
+        // If this is closer than our current minimum, reset the array with just this crossdock
+        else if (d < minDist) {
+          minDist = d;
+          nearestCrossdocks = [{ name: cname, lat: clat, lng: clng, distance: d }];
+        }
+      });
+      
+      // Draw a line to the nearest crossdock - with enhanced styling
+      if (nearestCrossdocks.length > 0) {
+        const nearest = nearestCrossdocks[0];
+        
+        // Create a more prominent connection
+        const line = L.polyline(
+          [[row.Latitude, row.Longitude], [nearest.lat, nearest.lng]], 
+          {
+            color: '#f2994a',  // Orange color for better visibility
+            weight: 3,
+            opacity: 0.8
+          }
+        ).addTo(map);
+        
+        // Add SVG animation to the line (custom pane)
+        line._path.classList.add('connection-strong');
+        
+        line.bindPopup(`
+          <strong>Connection Details</strong><br>
+          <strong>From:</strong> ${row.Name || 'Customer Location'}<br>
+          <strong>To:</strong> ${nearest.name}<br>
+          <strong>Distance:</strong> ${nearest.distance.toFixed(1)} miles
+        `);
+        
+        connectionLines.push(line);
+      }
+    });
+    
+    // Display lanes based on checkbox filters and state filter
+    displayFilteredLanes(showWarpLtl, showDedicated, state);
+    
+    // If we have facilities or lanes, fit the map to show them all
+    const mapBounds = [];
+    
+    // Add all customer locations to bounds
+    filteredFacilities.forEach(f => {
+      mapBounds.push([f.Latitude, f.Longitude]);
+    });
+    
+    // Add relevant crossdocks to bounds
+    const includedCrossdocks = new Set();
+    connectionLines.forEach(line => {
+      const points = line.getLatLngs();
+      if (points.length > 1) {
+        const crossdockPoint = points[1];
+        const crossdockKey = `${crossdockPoint.lat},${crossdockPoint.lng}`;
+        if (!includedCrossdocks.has(crossdockKey)) {
+          includedCrossdocks.add(crossdockKey);
+          mapBounds.push([crossdockPoint.lat, crossdockPoint.lng]);
+        }
+      }
+    });
+    
+    // Add lane endpoints to bounds
+    laneLines.forEach(line => {
+      const points = line.getLatLngs();
+      if (points.length > 1) {
+        mapBounds.push([points[0].lat, points[0].lng]);
+        mapBounds.push([points[1].lat, points[1].lng]);
+      }
+    });
+    
+    if (mapBounds.length > 0) {
+      map.fitBounds(L.latLngBounds(mapBounds), {
+        padding: [50, 50]
+      });
+    }
+    
+    document.getElementById("loading").style.display = "none";
+  }, 100); // Short timeout to allow the loading screen to appear
+}
+
+function displayFilteredLanes(showWarpLtl, showDedicated, stateFilter) {
+  // Process LTL lanes if checkbox is checked
+  if (showWarpLtl) {
+    warpLtlLanes.forEach(lane => {
+      const [origin, destination] = lane.split('-');
+      const originLoc = locationDatabase[origin];
+      const destLoc = locationDatabase[destination];
+      
+      if (originLoc && destLoc) {
+        // Filter by state if a state filter is applied
+        if (stateFilter) {
+          const originState = getStateFromLocationName(originLoc.name);
+          const destState = getStateFromLocationName(destLoc.name);
+          
+          // Only show lanes where origin or destination is in the filtered state
+          if (originState !== stateFilter && destState !== stateFilter) {
+            return;
+          }
+        }
+        
+        const line = L.polyline(
+          [[originLoc.lat, originLoc.lng], [destLoc.lat, destLoc.lng]], 
+          {
+            color: 'var(--warp-ltl-color)',
+            weight: 3,
+            opacity: 0.6,
+            dashArray: '5, 10'
+          }
+        ).addTo(map);
+        
+        line._path.classList.add('warp-ltl-lane');
+        
+        line.bindPopup(`
+          <strong>WARP LTL Lane</strong><br>
+          <strong>From:</strong> ${originLoc.name}<br>
+          <strong>To:</strong> ${destLoc.name}<br>
+          <strong>Lane ID:</strong> ${lane}
+        `);
+        
+        laneLines.push(line);
+      }
+    });
+  }
+  
+  // Process dedicated lanes if checkbox is checked
+  if (showDedicated) {
+    dedicatedLanes.forEach(lane => {
+      // Parse route and get coordinates
+      const routeParts = lane.route.split(/[>\-,]/)
+        .map(part => part.trim())
+        .filter(part => part && !part.includes("("));
+      
+      // Check if this lane should be displayed based on state filter
+      let includeThisLane = !stateFilter; // Include by default if no state filter
+      
+      if (stateFilter) {
+        // Check if any part of the route is in the filtered state
+        for (const part of routeParts) {
+          const partState = getStateFromLocationName(part);
+          if (partState === stateFilter) {
+            includeThisLane = true;
+            break;
+          }
+        }
+      }
+      
+      if (!includeThisLane) {
+        return;
+      }
+      
+      // Create points for each location in the route
+      const routePoints = [];
+      for (let i = 0; i < routeParts.length; i++) {
+        // Try to find location in our database
+        let location = null;
+        
+        // Try to find by city name in our location database
+        for (const [code, details] of Object.entries(locationDatabase)) {
+          if (routeParts[i].includes(details.name.split(',')[0])) {
+            location = details;
+            break;
+          }
+        }
+        
+        // If not found by name, just use the first city from our database (this is a fallback)
+        if (!location && i === 0) {
+          // For demonstration - in a real app you'd use geocoding API
+          const dummyLocation = Object.values(locationDatabase)[0];
+          if (dummyLocation) {
+            location = { 
+              lat: dummyLocation.lat + (Math.random() * 0.1 - 0.05), 
+              lng: dummyLocation.lng + (Math.random() * 0.1 - 0.05),
+              name: routeParts[i]
+            };
+          }
+        }
+        
+        if (location) {
+          routePoints.push([location.lat, location.lng]);
+        }
+      }
+      
+      // Draw line if we have at least 2 points
+      if (routePoints.length >= 2) {
+        for (let i = 0; i < routePoints.length - 1; i++) {
+          const line = L.polyline(
+            [routePoints[i], routePoints[i+1]], 
+            {
+              color: 'var(--dedicated-lane-color)',
+              weight: 3,
+              opacity: 0.7
+            }
+          ).addTo(map);
+          
+          line._path.classList.add('dedicated-lane');
+          
+          line.bindPopup(`
+            <strong>Dedicated Lane</strong><br>
+            <strong>Customer:</strong> ${lane.customer}<br>
+            <strong>Route:</strong> ${lane.formattedRoute}
+          `);
+          
+          laneLines.push(line);
+        }
+      }
+    });
+  }
+}
+
+function resetFilters() {
+  document.getElementById("state-filter").value = "";
+  document.getElementById("brand-filter").value = "";
+  document.getElementById("type-filter").value = "";
+  document.getElementById("show-warp-ltl").checked = true;
+  document.getElementById("show-dedicated").checked = true;
+  
+  // Apply the reset filters
+  applyFilters();
+}
+
+function showAllLanes() {
+  // Clear the map
+  clearMap();
+  
+  // Show all lanes
+  document.getElementById("show-warp-ltl").checked = true;
+  document.getElementById("show-dedicated").checked = true;
+  
+  // Get the current state filter value
+  const stateFilter = document.getElementById("state-filter").value;
+  
+  // Display lanes without customer markers
+  displayFilteredLanes(true, true, stateFilter);
+  
+  // Fit map to show all lanes
+  if (laneLines.length > 0) {
+    const bounds = [];
+    laneLines.forEach(line => {
+      const points = line.getLatLngs();
+      bounds.push(...points);
+    });
+    map.fitBounds(L.latLngBounds(bounds), {
+      padding: [50, 50]
+    });
+  }
+  
+  // Show the lane panel
+  showLanePanel('all');
+}
+
+function showLanePanel(filterType) {
+  const laneList = document.getElementById('lane-list');
+  laneList.innerHTML = '';
+  const lanePanel = document.getElementById('lane-panel');
+  const stateFilter = document.getElementById("state-filter").value;
+  
+  if (filterType === 'ltl' || filterType === 'all') {
+    // Filter LTL lanes by state if state filter is active
+    const filteredLtlLanes = formattedWarpLtlLanes.filter(lane => {
+      if (!stateFilter) return true;
+      
+      const originState = getStateFromLocationName(lane.originName);
+      const destState = getStateFromLocationName(lane.destinationName);
+      
+      return originState === stateFilter || destState === stateFilter;
+    });
+    
+    // Add LTL lanes to panel
+    filteredLtlLanes.forEach(lane => {
+      const laneItem = document.createElement('div');
+      laneItem.className = 'lane-item';
+      laneItem.innerHTML = `
+        <div class="lane-type">
+          <span class="lane-color-indicator ltl-color"></span>
+          WARP LTL Lane: ${lane.origin}-${lane.destination}
+        </div>
+        <div class="lane-route">${lane.originName} to ${lane.destinationName}</div>
+      `;
+      laneList.appendChild(laneItem);
+    });
+  }
+  
+  if (filterType === 'dedicated' || filterType === 'all') {
+    // Filter dedicated lanes by state if state filter is active
+    const filteredDedicatedLanes = dedicatedLanes.filter(lane => {
+      if (!stateFilter) return true;
+      
+      // Check if any part of the route is in the filtered state
+      const routeParts = lane.route.split(/[>\-,]/)
+        .map(part => part.trim())
+        .filter(part => part && !part.includes("("));
+      
+      for (const part of routeParts) {
+        const partState = getStateFromLocationName(part);
+        if (partState === stateFilter) {
+          return true;
+        }
+      }
+      
+      return false;
+    });
+    
+    // Add dedicated lanes to panel
+    filteredDedicatedLanes.forEach(lane => {
+      const laneItem = document.createElement('div');
+      laneItem.className = 'lane-item';
+      laneItem.innerHTML = `
+        <div class="lane-type">
+          <span class="lane-color-indicator dedicated-color"></span>
+          Dedicated Lane: ${lane.customer}
+        </div>
+        <div class="lane-route">${lane.formattedRoute}</div>
+      `;
+      laneList.appendChild(laneItem);
+    });
+  }
+  
+  // Show the panel
+  lanePanel.style.display = 'block';
+}
+
+// File upload event listener
+document.getElementById("csv-upload").addEventListener("change", function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  
+  document.getElementById("loading").style.display = "flex";
+  document.getElementById("file-name").textContent = file.name;
+  document.getElementById("file-name").style.display = "block";
+
+  Papa.parse(file, {
+    header: true,
+    dynamicTyping: true,
+    skipEmptyLines: true,
+    complete: function(results) {
+      allFacilities = results.data
+        .filter(r => r.Latitude && r.Longitude && r.Address)
+        .map(r => {
+          const state = getStateFromAddress(r.Address);
+          return {
+            ...r,
+            Latitude: parseFloat(r.Latitude),
+            Longitude: parseFloat(r.Longitude),
+            State: state
+          };
+        })
+        .filter(r =>
+          usStates.has(r.State) &&
+          !r.Address.toLowerCase().includes("canada")
+        );
+
+      updateFilters();
+      applyFilters();
+    },
+    error: function(error) {
+      console.error("Error parsing CSV:", error);
+      document.getElementById("loading").style.display = "none";
+      alert("Error parsing CSV file. Please make sure it's correctly formatted.");
+    }
+  });
+});
+
+// Lane panel close button
+document.getElementById("close-lane-panel").addEventListener("click", function() {
+  document.getElementById("lane-panel").style.display = "none";
+});
+
+// Lane filter buttons
+document.getElementById("show-ltl-lanes").addEventListener("click", function() {
+  showLanePanel('ltl');
+  clearMap();
+  displayFilteredLanes(true, false, document.getElementById("state-filter").value);
+});
+
+document.getElementById("show-dedicated-lanes").addEventListener("click", function() {
+  showLanePanel('dedicated');
+  clearMap();
+  displayFilteredLanes(false, true, document.getElementById("state-filter").value);
+});
+
+document.getElementById("show-all-lane-types").addEventListener("click", function() {
+  showLanePanel('all');
+  clearMap();
+  displayFilteredLanes(true, true, document.getElementById("state-filter").value);
+});
+
+// Add event listeners
+document.getElementById("apply-filters").addEventListener("click", applyFilters);
+document.getElementById("reset-filters").addEventListener("click", resetFilters);
+document.getElementById("show-all-lanes").addEventListener("click", showAllLanes);
+
+// Lane checkbox filters
+document.getElementById("show-warp-ltl").addEventListener("change", applyFilters);
+document.getElementById("show-dedicated").addEventListener("change", applyFilters);
+
+// Initialize
+document.getElementById("lane-panel").style.display = "none";
+
+</script>
+
+</body>
+</html>
+
